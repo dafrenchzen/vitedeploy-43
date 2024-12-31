@@ -1,0 +1,75 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Fonctions helper
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    
+    function isAudio() {
+      return request.resource.contentType.matches('audio/.*');
+    }
+    
+    function isValidFileSize() {
+      return request.resource.size < 50 * 1024 * 1024; // 50MB max
+    }
+
+    // Dossier des photos de profil utilisateur
+    match /users/{userId}/profile-photo {
+      allow read: if true;
+      allow write: if isAuthenticated() 
+        && isOwner(userId) 
+        && isImage() 
+        && isValidFileSize();
+    }
+
+    // Dossier des beats
+    match /beats/{beatId}/{fileName} {
+      // Images des beats
+      match /images/{imageId} {
+        allow read: if true;
+        allow write: if isAuthenticated() 
+          && isAdmin() 
+          && isImage() 
+          && isValidFileSize();
+      }
+      
+      // Fichiers audio des beats
+      match /audio/{audioId} {
+        allow read: if true;
+        allow write: if isAuthenticated() 
+          && isAdmin() 
+          && isAudio() 
+          && isValidFileSize();
+      }
+    }
+
+    // Dossier des réservations (pour les fichiers uploadés lors des sessions)
+    match /bookings/{bookingId}/{fileName} {
+      allow read: if isAuthenticated() && (
+        isOwner(resource.metadata.userId) || isAdmin()
+      );
+      allow write: if isAuthenticated() && (
+        isOwner(request.resource.metadata.userId) || isAdmin()
+      ) && isValidFileSize();
+    }
+
+    // Dossier public (assets, images du site, etc.)
+    match /public/{fileName=**} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isAdmin();
+    }
+  }
+}

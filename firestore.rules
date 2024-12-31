@@ -1,0 +1,128 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Fonctions helper
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    function isValidBeat() {
+      let requiredFields = ['title', 'producer', 'bpm', 'price', 'tags', 'audioPath'];
+      let beat = request.resource.data;
+      
+      return beat.keys().hasAll(requiredFields)
+        && beat.title is string && beat.title.size() > 0
+        && beat.producer is string && beat.producer.size() > 0
+        && beat.bpm is number && beat.bpm > 0
+        && beat.price is number && beat.price >= 0
+        && beat.tags is list
+        && beat.audioPath is string && beat.audioPath.size() > 0;
+    }
+    
+    function isValidBooking() {
+      let booking = request.resource.data;
+      let now = request.time;
+      
+      return booking.userId == request.auth.uid
+        && booking.status in ['pending', 'confirmed', 'cancelled']
+        && booking.date is timestamp
+        && booking.startTime is string
+        && booking.type in ['recording', 'mixing', 'mastering', 'photo']
+        && (booking.notes == null || booking.notes is string);
+    }
+
+    // Règles pour la collection users
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId);
+      allow update: if isAuthenticated() && isOwner(userId);
+      allow delete: if isAuthenticated() && (isOwner(userId) || isAdmin());
+      
+      // Sous-collection pour les favoris
+      match /favorites/{beatId} {
+        allow read: if isAuthenticated() && isOwner(userId);
+        allow write: if isAuthenticated() && isOwner(userId);
+      }
+    }
+    
+    // Règles pour la collection beats
+    match /beats/{beatId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isAdmin() && isValidBeat();
+      allow update: if isAuthenticated() && isAdmin();
+      allow delete: if isAuthenticated() && isAdmin();
+      
+      // Sous-collection pour les commentaires
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isAuthenticated();
+        allow update, delete: if isAuthenticated() && (
+          request.auth.uid == resource.data.userId || isAdmin()
+        );
+      }
+      
+      // Sous-collection pour les likes
+      match /likes/{userId} {
+        allow read: if true;
+        allow write: if isAuthenticated() && isOwner(userId);
+      }
+      
+      // Sous-collection pour les plays
+      match /plays/{playId} {
+        allow read: if true;
+        allow create: if isAuthenticated();
+        allow update, delete: if isAuthenticated() && isAdmin();
+      }
+    }
+
+    // Règles pour la collection bookings
+    match /bookings/{bookingId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow create: if isAuthenticated() && isValidBooking();
+      allow update: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      allow delete: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid || isAdmin()
+      );
+      
+      // Sous-collection pour les fichiers de la session
+      match /files/{fileId} {
+        allow read: if isAuthenticated() && (
+          isOwner(resource.data.userId) || isAdmin()
+        );
+        allow write: if isAuthenticated() && (
+          isOwner(request.resource.data.userId) || isAdmin()
+        );
+      }
+    }
+
+    // Règles pour les paramètres du studio
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isAdmin();
+    }
+    
+    // Règles pour les disponibilités
+    match /availability/{date} {
+      allow read: if true;
+      allow write: if isAuthenticated() && isAdmin();
+    }
+    
+    // Règles pour les autres collections
+    match /{document=**} {
+      allow read: if isAuthenticated() && isAdmin();
+      allow write: if isAuthenticated() && isAdmin();
+    }
+  }
+}
